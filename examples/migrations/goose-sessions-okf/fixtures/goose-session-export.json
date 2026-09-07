@@ -1,0 +1,30 @@
+{
+  "id": "20260907_1",
+  "description": "payments-api deployment memory",
+  "working_dir": "/Users/alex/projects/payments-api",
+  "created_at": "2026-09-07T18:10:00Z",
+  "updated_at": "2026-09-07T18:42:00Z",
+  "model": "claude-sonnet-4",
+  "messages": [
+    {
+      "role": "user",
+      "created_at": "2026-09-07T18:10:05Z",
+      "content": "Remember: for the payments API, always run npm test before deploying. Prefer concise PR descriptions that start with the behavior change."
+    },
+    {
+      "role": "assistant",
+      "created_at": "2026-09-07T18:21:30Z",
+      "content": "Added a regression test for webhook retry idempotency, fixed the duplicate retry guard, and verified that npm test now passes."
+    },
+    {
+      "role": "user",
+      "created_at": "2026-09-07T18:25:00Z",
+      "content": "Decision: use Postgres advisory locks for payout reconciliation instead of Redis locks because the transaction boundary is easier to audit."
+    },
+    {
+      "role": "assistant",
+      "created_at": "2026-09-07T18:38:45Z",
+      "content": "Created docs/migration-notes.md with the advisory-lock rollout plan and updated the PR checklist."
+    }
+  ]
+}
