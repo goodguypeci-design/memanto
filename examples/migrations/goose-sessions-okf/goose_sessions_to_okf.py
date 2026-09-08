@@ -60,6 +60,10 @@ class GooseSession:
     created_at: str | None = None
     updated_at: str | None = None
     model: str | None = None
+    provider: str | None = None
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     messages: list[GooseMessage] | None = None
 
     @property
@@ -126,6 +130,7 @@ UNIX_HOME_RE = re.compile(r"(?<!\w)/(?:Users|home)/[^/\s]+")
 WINDOWS_HOME_RE = re.compile(
     r"(?i)\b[A-Z]:\\Users\\[^\\\s]+(?:\\AppData\\(?:Local|Roaming))?"
 )
+TURN_CONTEXT_RE = re.compile(r"<turn-context>.*?</turn-context>", re.DOTALL)
 
 
 def redact_text(text: str) -> str:
@@ -184,6 +189,7 @@ def normalize_message(raw: Any) -> GooseMessage | None:
     ).strip()
     if not content and raw.get("tool_call"):
         content = compact_text(raw["tool_call"]).strip()
+    content = TURN_CONTEXT_RE.sub("", content).strip()
     if not content:
         return None
 
@@ -191,6 +197,7 @@ def normalize_message(raw: Any) -> GooseMessage | None:
     timestamp = normalize_timestamp(
         raw.get("created_at")
         or raw.get("createdAt")
+        or raw.get("created_timestamp")
         or raw.get("timestamp")
         or raw.get("time")
     )
@@ -220,6 +227,10 @@ def _messages_from_container(raw: dict[str, Any]) -> list[GooseMessage]:
 
 
 def normalize_session(raw: dict[str, Any], source_ref: str) -> GooseSession | None:
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    model_config = parse_jsonish(raw.get("model_config_json"))
+    if not isinstance(model_config, dict):
+        model_config = {}
     session_id = str(
         raw.get("id")
         or raw.get("session_id")
@@ -231,6 +242,7 @@ def normalize_session(raw: dict[str, Any], source_ref: str) -> GooseSession | No
         raw.get("description")
         or raw.get("title")
         or raw.get("name")
+        or metadata.get("name")
         or raw.get("summary")
         or session_id
     )
@@ -245,10 +257,20 @@ def normalize_session(raw: dict[str, Any], source_ref: str) -> GooseSession | No
         working_dir=raw.get("working_dir")
         or raw.get("workingDir")
         or raw.get("cwd")
-        or raw.get("directory"),
+        or raw.get("directory")
+        or metadata.get("working_dir"),
         created_at=normalize_timestamp(raw.get("created_at") or raw.get("createdAt")),
         updated_at=normalize_timestamp(raw.get("updated_at") or raw.get("updatedAt")),
-        model=raw.get("model") or raw.get("provider_model"),
+        model=raw.get("model")
+        or raw.get("provider_model")
+        or metadata.get("model")
+        or model_config.get("model_name"),
+        provider=raw.get("provider")
+        or raw.get("provider_name")
+        or metadata.get("provider"),
+        total_tokens=int(raw.get("total_tokens") or 0),
+        input_tokens=int(raw.get("input_tokens") or 0),
+        output_tokens=int(raw.get("output_tokens") or 0),
         messages=messages,
     )
 
@@ -333,6 +355,11 @@ def read_sessions_db(path: Path) -> list[GooseSession]:
                     "created_at": row.get("created_at"),
                     "updated_at": row.get("updated_at"),
                     "model": row.get("model"),
+                    "model_config_json": row.get("model_config_json"),
+                    "provider_name": row.get("provider_name"),
+                    "total_tokens": row.get("total_tokens") or 0,
+                    "input_tokens": row.get("input_tokens") or 0,
+                    "output_tokens": row.get("output_tokens") or 0,
                     "messages": [],
                 }
                 for key in ("messages", "conversation", "history", "transcript"):
@@ -343,7 +370,11 @@ def read_sessions_db(path: Path) -> list[GooseSession]:
 
         for table in tables:
             columns = set(table_columns(conn, table))
-            if not {"role", "content"}.issubset(columns):
+            content_column = next(
+                (column for column in ("content", "content_json") if column in columns),
+                None,
+            )
+            if "role" not in columns or content_column is None:
                 continue
             sid_column = next(
                 (
@@ -356,7 +387,14 @@ def read_sessions_db(path: Path) -> list[GooseSession]:
             order_column = next(
                 (
                     col
-                    for col in ("created_at", "timestamp", "time", "idx", "id")
+                    for col in (
+                        "created_at",
+                        "created_timestamp",
+                        "timestamp",
+                        "time",
+                        "idx",
+                        "id",
+                    )
                     if col in columns
                 ),
                 None,
@@ -364,6 +402,8 @@ def read_sessions_db(path: Path) -> list[GooseSession]:
             order_sql = f" ORDER BY {order_column}" if order_column else ""
             for row in conn.execute(f"SELECT * FROM {table}{order_sql}").fetchall():
                 item = dict(row)
+                if content_column == "content_json":
+                    item["content"] = parse_jsonish(item.get("content_json"))
                 sid = str(item.get(sid_column) or item.get("session") or "unknown")
                 if sid not in sessions:
                     sessions[sid] = {
@@ -453,6 +493,10 @@ def make_session_memory(session: GooseSession) -> OkfMemory:
         body_parts.append(f"Working directory: `{session.working_dir}`")
     if session.model:
         body_parts.append(f"Model: `{session.model}`")
+    if session.provider:
+        body_parts.append(f"Provider: `{session.provider}`")
+    if session.total_tokens:
+        body_parts.append(f"Recorded tokens: {session.total_tokens}")
     first = first_user_message(session)
     if first:
         body_parts.append(f"First user prompt: {first}")
@@ -637,15 +681,25 @@ def write_summary(
     sessions: list[GooseSession],
     memories: list[OkfMemory],
     bundle_result: dict[str, Any],
+    redact: bool,
 ) -> dict[str, Any]:
+    source_label = redact_text(str(source)) if redact else str(source)
+    output_label = (
+        redact_text(str(bundle_result["output_path"]))
+        if redact
+        else str(bundle_result["output_path"])
+    )
     summary = {
         "provider": "goose",
-        "source": str(source),
+        "source": source_label,
         "source_sessions": len(sessions),
         "source_messages": sum(len(session.messages or []) for session in sessions),
+        "source_tokens": sum(session.total_tokens for session in sessions),
+        "source_input_tokens": sum(session.input_tokens for session in sessions),
+        "source_output_tokens": sum(session.output_tokens for session in sessions),
         "mapped_memories": len(memories),
         "type_counts": bundle_result["type_counts"],
-        "output_path": bundle_result["output_path"],
+        "output_path": output_label,
         "generated_at": utc_timestamp(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -663,8 +717,13 @@ def convert_source(
     redact: bool = True,
     force: bool = False,
     max_memories_per_session: int = 12,
+    session_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     sessions = read_goose_sources(source)
+    if session_ids:
+        sessions = [
+            session for session in sessions if session.session_id in session_ids
+        ]
     if not sessions:
         raise ValueError(f"No goose sessions found in {source}")
     memories = extract_memories(
@@ -677,9 +736,16 @@ def convert_source(
         "provider": "goose",
         "source_sessions": len(sessions),
         "source_messages": sum(len(session.messages or []) for session in sessions),
+        "source_tokens": sum(session.total_tokens for session in sessions),
+        "source_input_tokens": sum(session.input_tokens for session in sessions),
+        "source_output_tokens": sum(session.output_tokens for session in sessions),
         "mapped_memories": len(memories),
         "type_counts": bundle_result["type_counts"],
-        "output_path": bundle_result["output_path"],
+        "output_path": (
+            redact_text(str(bundle_result["output_path"]))
+            if redact
+            else bundle_result["output_path"]
+        ),
     }
     if summary_path is not None:
         summary = write_summary(
@@ -688,6 +754,7 @@ def convert_source(
             sessions=sessions,
             memories=memories,
             bundle_result=bundle_result,
+            redact=redact,
         )
     return summary
 
@@ -719,6 +786,12 @@ def parse_args() -> argparse.Namespace:
         default=12,
         help="cap extracted transcript memories per session",
     )
+    parser.add_argument(
+        "--session-id",
+        action="append",
+        dest="session_ids",
+        help="include one session id; repeat to include several",
+    )
     return parser.parse_args()
 
 
@@ -731,6 +804,7 @@ def main() -> None:
         redact=not args.no_redact,
         force=args.force,
         max_memories_per_session=args.max_memories_per_session,
+        session_ids=set(args.session_ids) if args.session_ids else None,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 
