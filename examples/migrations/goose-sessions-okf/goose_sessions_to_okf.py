@@ -41,6 +41,7 @@ VALID_MEMORY_TYPES = {
 GENERATED_MARKER = ".goose-okf-generated"
 MAX_TITLE_CHARS = 96
 MAX_BODY_CHARS = 2500
+SESSION_FILE_SUFFIXES = {".json", ".jsonl", ".db", ".sqlite", ".sqlite3"}
 
 
 @dataclass
@@ -125,15 +126,26 @@ TOKEN_RE = re.compile(
     r"(?i)\b(?:sk|ghp|gho|ghu|github_pat|xoxb|xoxp|api[_-]?key|token)"
     r"[A-Za-z0-9_\-:=.]{8,}"
 )
+BEARER_TOKEN_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}")
+API_KEY_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*"
+    r"\s*[:=]\s*)(['\"]?)[^'\"\s,;]{8,}\2"
+)
+AWS_ACCESS_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 UNIX_HOME_RE = re.compile(r"(?<!\w)/(?:Users|home)/[^/\s]+")
 WINDOWS_HOME_RE = re.compile(
     r"(?i)\b[A-Z]:\\Users\\[^\\\s]+(?:\\AppData\\(?:Local|Roaming))?"
 )
 TURN_CONTEXT_RE = re.compile(r"<turn-context>.*?</turn-context>", re.DOTALL)
+WORKING_DIRECTORY_FIELD_RE = re.compile(r"(?im)(Working directory:\s*`)[^`]+(`)")
 
 
 def redact_text(text: str) -> str:
+    text = WORKING_DIRECTORY_FIELD_RE.sub(r"\1[REDACTED_PATH]\2", text)
+    text = BEARER_TOKEN_RE.sub("Bearer [REDACTED_TOKEN]", text)
+    text = API_KEY_ASSIGNMENT_RE.sub(r"\1[REDACTED_TOKEN]", text)
+    text = AWS_ACCESS_KEY_RE.sub("[REDACTED_TOKEN]", text)
     text = TOKEN_RE.sub("[REDACTED_TOKEN]", text)
     text = EMAIL_RE.sub("[REDACTED_EMAIL]", text)
     text = WINDOWS_HOME_RE.sub("[REDACTED_HOME]", text)
@@ -312,7 +324,6 @@ def table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 
 def rows_as_dicts(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
-    conn.row_factory = sqlite3.Row
     rows = conn.execute(f"SELECT * FROM {table}").fetchall()
     return [dict(row) for row in rows]
 
@@ -341,6 +352,7 @@ def read_sessions_db(path: Path) -> list[GooseSession]:
 
     uri = f"file:{path.as_posix()}?mode=ro"
     with sqlite3.connect(uri, uri=True) as conn:
+        conn.row_factory = sqlite3.Row
         tables = sqlite_tables(conn)
 
         if "sessions" in tables:
@@ -435,7 +447,7 @@ def read_goose_sources(path: Path) -> list[GooseSession]:
         else sorted(
             item
             for item in path.rglob("*")
-            if item.is_file() and item.suffix.lower() in {".json", ".jsonl", ".db"}
+            if item.is_file() and item.suffix.lower() in SESSION_FILE_SUFFIXES
         )
     )
 
@@ -674,8 +686,7 @@ def write_bundle(
     }
 
 
-def write_summary(
-    path: Path,
+def build_summary(
     *,
     source: Path,
     sessions: list[GooseSession],
@@ -702,11 +713,14 @@ def write_summary(
         "output_path": output_label,
         "generated_at": utc_timestamp(),
     }
+    return summary
+
+
+def write_summary(path: Path, summary: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    return summary
 
 
 def convert_source(
@@ -732,30 +746,15 @@ def convert_source(
         max_memories_per_session=max_memories_per_session,
     )
     bundle_result = write_bundle(memories, output_dir, force=force)
-    summary = {
-        "provider": "goose",
-        "source_sessions": len(sessions),
-        "source_messages": sum(len(session.messages or []) for session in sessions),
-        "source_tokens": sum(session.total_tokens for session in sessions),
-        "source_input_tokens": sum(session.input_tokens for session in sessions),
-        "source_output_tokens": sum(session.output_tokens for session in sessions),
-        "mapped_memories": len(memories),
-        "type_counts": bundle_result["type_counts"],
-        "output_path": (
-            redact_text(str(bundle_result["output_path"]))
-            if redact
-            else bundle_result["output_path"]
-        ),
-    }
+    summary = build_summary(
+        source=source,
+        sessions=sessions,
+        memories=memories,
+        bundle_result=bundle_result,
+        redact=redact,
+    )
     if summary_path is not None:
-        summary = write_summary(
-            summary_path,
-            source=source,
-            sessions=sessions,
-            memories=memories,
-            bundle_result=bundle_result,
-            redact=redact,
-        )
+        write_summary(summary_path, summary)
     return summary
 
 

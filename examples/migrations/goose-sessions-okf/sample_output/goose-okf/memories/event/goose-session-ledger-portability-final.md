@@ -16,7 +16,7 @@ Session id: `20260908_6`
 
 Description: ledger-portability-final
 
-Working directory: `[REDACTED_HOME]\Desktop\Bounty-Work\goose-real-workspace`
+Working directory: `[REDACTED_PATH]`
 
 Model: `gpt-5.6-luna`
 

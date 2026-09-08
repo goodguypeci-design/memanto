@@ -25,11 +25,21 @@ $first = "Read README.md, ledger.py and test_ledger.py. Run python -m unittest -
 $second = "Continue with the remaining failure. Update only audit_line so it never stores the full customer email. For alex@example.com it must show a***@example.com while preserving the payment amount. Run python -m unittest -v and confirm both tests pass."
 $recall = "Without reading the files again, state the three project rules you retained from this session: the reconciliation-key rule, the audit-log privacy rule, and the required completion check. Keep the answer to three short bullets."
 
+function Assert-GooseSucceeded {
+    param([string]$Step)
+    if ($LASTEXITCODE -ne 0) {
+        throw "goose $Step failed with exit code $LASTEXITCODE"
+    }
+}
+
 Push-Location $workspace
 try {
     & $Goose run --provider $Provider --model $Model --no-profile --with-builtin developer --name $SessionName --max-turns 12 --system $system --text $first
+    Assert-GooseSucceeded "first turn"
     & $Goose run --provider $Provider --model $Model --no-profile --with-builtin developer --resume --name $SessionName --max-turns 10 --text $second
+    Assert-GooseSucceeded "second turn"
     & $Goose run --provider $Provider --model $Model --no-profile --resume --name $SessionName --max-turns 4 --text $recall
+    Assert-GooseSucceeded "recall turn"
 }
 finally {
     Pop-Location

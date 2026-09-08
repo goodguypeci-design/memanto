@@ -64,13 +64,17 @@ def validate(bundle: Path, questions: dict[str, list[str]] | None = None) -> dic
     rows = map_okf(export)
     type_counts = Counter(row.get("type") or "auto" for row in rows)
     checks = check_recall(rows, questions or QUESTIONS)
+    loaded_count = len(export["memories"])
+    mapped_count = len(rows)
     return {
         "bundle": str(bundle),
-        "loaded_okf_entries": len(export["memories"]),
-        "mapped_memanto_rows": len(rows),
+        "loaded_okf_entries": loaded_count,
+        "mapped_memanto_rows": mapped_count,
         "type_counts": dict(sorted(type_counts.items())),
         "recall_checks": checks,
-        "passed": bool(rows) and all(item["passed"] for item in checks),
+        "passed": bool(rows)
+        and mapped_count == loaded_count
+        and all(item["passed"] for item in checks),
     }
 
 

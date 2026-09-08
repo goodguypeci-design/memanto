@@ -48,7 +48,7 @@ def export_session(
     ]
     return {
         "id": session.session_id,
-        "description": session.description,
+        "description": redact_text(session.description),
         "working_dir": redact_text(session.working_dir or ""),
         "created_at": session.created_at,
         "updated_at": session.updated_at,

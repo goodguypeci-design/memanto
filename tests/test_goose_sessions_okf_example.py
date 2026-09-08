@@ -72,13 +72,18 @@ def test_goose_json_export_round_trips_through_okf(tmp_path):
     assert summary["mapped_memories"] == 3
     assert summary["type_counts"] == {"event": 1, "fact": 1, "preference": 1}
     assert (tmp_path / "summary.json").exists()
+    assert (
+        json.loads((tmp_path / "summary.json").read_text(encoding="utf-8")) == summary
+    )
+    assert summary["source"].endswith("goose-export.json")
+    assert summary["generated_at"]
 
     rows = map_okf(load_okf_bundle(tmp_path / "okf"))
     assert {row["type"] for row in rows} == {"event", "fact", "preference"}
     content = "\n".join(row["content"] for row in rows)
     assert "npm test before deploying" in content
     assert "/Users/alex" not in content
-    assert "[REDACTED_HOME]" in content
+    assert "Working directory: `[REDACTED_PATH]`" in content
 
 
 def test_goose_sqlite_sessions_are_read_best_effort(tmp_path):
@@ -96,7 +101,7 @@ def test_goose_sqlite_sessions_are_read_best_effort(tmp_path):
             (
                 "20260907_2",
                 "release notes",
-                r"C:\\Users\\Alex\\AppData\\Roaming\\Block\\goose",
+                r"C:\Users\Alex\AppData\Roaming\Block\goose",
                 "2026-09-07T19:00:00Z",
             ),
         )
@@ -137,7 +142,7 @@ def test_current_goose_sqlite_content_json_and_usage_are_preserved(tmp_path):
             (
                 "20260908_3",
                 "real local run",
-                r"C:\\Users\\Alex\\work",
+                r"C:\Users\Alex\work",
                 "2026-09-08T03:00:00Z",
                 "ollama",
                 json.dumps({"model_name": "qwen3:4b"}),
@@ -202,7 +207,47 @@ def test_current_goose_sqlite_content_json_and_usage_are_preserved(tmp_path):
         session_ids={"20260908_3"},
     )
     assert selected["source_sessions"] == 1
-    assert "Alex" not in selected["output_path"]
+    selected_content = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (tmp_path / "selected").rglob("*.md")
+    )
+    assert "Alex" not in selected_content
+    assert "Working directory: `[REDACTED_PATH]`" in selected_content
+
+
+def test_redaction_covers_common_secret_shapes():
+    module = load_example_module()
+    redacted = module.redact_text(
+        "Authorization: Bearer abcdefghijklmnopqr "
+        "OPENAI_API_KEY=sk-test1234567890 "
+        "AWS key AKIAABCDEFGHIJKLMNOP"
+    )
+
+    assert "abcdefghijklmnopqr" not in redacted
+    assert "sk-test1234567890" not in redacted
+    assert "AKIAABCDEFGHIJKLMNOP" not in redacted
+    assert redacted.count("[REDACTED_TOKEN]") == 3
+
+
+def test_directory_scan_includes_sqlite_variants(tmp_path):
+    module = load_example_module()
+    source_dir = tmp_path / "goose-history"
+    source_dir.mkdir()
+    db = source_dir / "history.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
+        conn.execute(
+            "INSERT INTO messages VALUES (?, ?, ?)",
+            (
+                "sqlite-session",
+                "user",
+                "Decision: keep sqlite session files in directory scans.",
+            ),
+        )
+
+    sessions = module.read_goose_sources(source_dir)
+
+    assert [session.session_id for session in sessions] == ["sqlite-session"]
 
 
 def test_fixture_export_selects_only_the_requested_session(tmp_path):
@@ -221,7 +266,7 @@ def test_fixture_export_selects_only_the_requested_session(tmp_path):
         )
         conn.execute(
             "INSERT INTO sessions VALUES (?, ?, ?)",
-            ("wanted", "selected run", "2026-09-08T02:00:00Z"),
+            ("wanted", "selected run for alex@example.com", "2026-09-08T02:00:00Z"),
         )
         conn.execute(
             "INSERT INTO messages VALUES (?, ?, ?, ?)",
@@ -236,4 +281,4 @@ def test_fixture_export_selects_only_the_requested_session(tmp_path):
     )
 
     assert exported["id"] == "wanted"
-    assert exported["description"] == "selected run"
+    assert exported["description"] == "selected run for [REDACTED_EMAIL]"
