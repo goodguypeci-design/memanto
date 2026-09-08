@@ -1,7 +1,7 @@
 # Migration metrics
 
-- Total memories: 5
-- decision: 1
+- Total memories: 4
+- error: 1
 - event: 1
-- fact: 2
+- fact: 1
 - preference: 1

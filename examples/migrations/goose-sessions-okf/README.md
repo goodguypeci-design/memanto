@@ -1,6 +1,6 @@
 # Goose sessions → portable OKF
 
-This migration showcase turns local [goose](https://goose-docs.ai/) session
+This migration showcase turns local [goose](https://block.github.io/goose/) session
 history into a portable Open Knowledge Format (OKF) bundle that Memanto can
 import with:
 
@@ -44,11 +44,25 @@ python examples/migrations/goose-sessions-okf/goose_sessions_to_okf.py \
 python examples/migrations/goose-sessions-okf/validate_roundtrip.py \
   examples/migrations/goose-sessions-okf/sample_output/goose-okf \
   --report examples/migrations/goose-sessions-okf/sample_output/parity-report.md
+
+memanto migrate okf \
+  examples/migrations/goose-sessions-okf/sample_output/goose-okf \
+  --dry-run
 ```
 
-The committed fixture mirrors goose's exported session shape: metadata plus a
-conversation history. For a real local goose install, point the converter at one
-of these paths instead:
+The committed fixture is a privacy-safe export from a real Goose 1.49.0 run. It
+records the source session id and SHA-256 of the SQLite database used to produce
+it. Recreate a fixture from your own session with:
+
+```bash
+python examples/migrations/goose-sessions-okf/export_fixture.py \
+  /path/to/sessions.db \
+  --session-id YOUR_SESSION_ID \
+  --goose-version "$(goose --version)" \
+  --out examples/migrations/goose-sessions-okf/fixtures/goose-session-export.json
+```
+
+You can also point the converter directly at one of these live-store copies:
 
 - macOS/Linux current storage:
   `~/.local/share/goose/sessions/sessions.db`
@@ -59,6 +73,37 @@ of these paths instead:
 
 Use a copy of `sessions.db` if goose is running, so the converter never competes
 with the live app for its database file.
+
+## Recorded run
+
+The sample came from a three-turn Goose session using the `chatgpt_codex`
+provider and `gpt-5.6-luna`. Goose fixed a deliberately failing reconciliation
+helper in two small steps, ran the real Python test suite, then recalled these
+rules without reopening the files:
+
+- reconciliation keys must be deterministic across machines;
+- audit logs must not contain a customer's full email address;
+- `python -m unittest -v` is required before completion.
+
+The captured session contains six conversational messages and 3,610 recorded
+tokens. The adapter maps them to four OKF memories. Memanto's shipped OKF dry
+run accepts all four, and the deterministic recall check passes all four golden
+questions. A live Memanto import then accepted all four memories in one batch,
+retrieved all four, answered the three-rule question correctly, and exported
+the same four memories back to OKF. The exported bundle passes the same four
+golden checks. The raw account email and Windows user directory are redacted in
+the committed fixture.
+
+To create the same source session, configure Goose once and run:
+
+```powershell
+pwsh examples/migrations/goose-sessions-okf/run_goose_session.ps1
+```
+
+The script copies the deliberately failing project into `.demo-workspace`, asks
+Goose to make the two focused fixes in separate turns, runs the tests, and asks
+the final recall question. It uses the configured Goose provider by default;
+the provider, model and executable can all be overridden with script arguments.
 
 ## Demo
 
@@ -97,5 +142,8 @@ Pass `--no-redact` only when creating a private archive.
 command above. It includes:
 
 - `goose-okf/` — OKF bundle with markdown memories and metrics
+- `memanto-exported-okf/` — the bundle exported after the live Memanto import
 - `migration-summary.json` — source count, mapped count, and type breakdown
 - `parity-report.md` — deterministic recall-parity check over the OKF import
+- `memanto-export-parity-report.md` — the same checks over Memanto's export
+- `migration-report.md` — measured mapping, runtime, size, and cost claims

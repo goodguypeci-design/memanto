@@ -20,8 +20,9 @@ from memanto.cli.migrate.okf_loader import load_okf_bundle  # noqa: E402
 
 QUESTIONS = {
     "Which agent generated the migrated sessions?": ["goose"],
-    "What deployment preference was preserved?": ["npm test", "deploying"],
-    "Which locking decision should survive the migration?": ["postgres", "redis"],
+    "How must reconciliation keys behave?": ["deterministic", "across machines"],
+    "What customer data must audit output protect?": ["full email address"],
+    "What check is required before completion?": ["python -m unittest -v"],
 }
 
 
@@ -43,11 +44,26 @@ def check_recall(rows: list[dict], needle_groups: dict[str, list[str]]) -> list[
     return report
 
 
-def validate(bundle: Path) -> dict:
+def load_questions(path: Path | None) -> dict[str, list[str]]:
+    if path is None:
+        return QUESTIONS
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not all(
+        isinstance(question, str)
+        and isinstance(terms, list)
+        and terms
+        and all(isinstance(term, str) and term for term in terms)
+        for question, terms in value.items()
+    ):
+        raise ValueError("questions must be a JSON object of question-to-term lists")
+    return value
+
+
+def validate(bundle: Path, questions: dict[str, list[str]] | None = None) -> dict:
     export = load_okf_bundle(bundle)
     rows = map_okf(export)
     type_counts = Counter(row.get("type") or "auto" for row in rows)
-    checks = check_recall(rows, QUESTIONS)
+    checks = check_recall(rows, questions or QUESTIONS)
     return {
         "bundle": str(bundle),
         "loaded_okf_entries": len(export["memories"]),
@@ -84,9 +100,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--report", type=Path, help="write markdown validation report")
+    parser.add_argument(
+        "--questions",
+        type=Path,
+        help="JSON object mapping recall questions to required answer terms",
+    )
     args = parser.parse_args()
 
-    result = validate(args.bundle)
+    result = validate(args.bundle, load_questions(args.questions))
     if args.report:
         write_markdown(result, args.report)
     print(json.dumps(result, indent=2))
