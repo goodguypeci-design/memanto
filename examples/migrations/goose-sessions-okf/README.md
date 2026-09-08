@@ -32,6 +32,24 @@ carry to another OKF-compatible tool.
 
 ## Quickstart
 
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/). From a fresh checkout,
+install the repository dependencies and reproduce the committed example:
+
+```bash
+uv sync
+uv run python examples/migrations/goose-sessions-okf/run_showcase.py
+```
+
+This single command converts the fixture, runs Memanto's shipped OKF dry run,
+checks the generated bundle, and checks the committed export from the recorded
+cloud run. It prints the location of a new temporary directory containing all
+outputs and logs. Use `--out PATH` to choose a new directory instead. No API key
+is needed for these local checks. This does not repeat the live cloud import
+or run Goose again; the video and recorded export document that separate run.
+
+For the individual commands, use the same environment (`uv run python` and
+`uv run memanto`) or activate the environment first.
+
 From the repository root:
 
 ```bash
@@ -107,9 +125,37 @@ the provider, model and executable can all be overridden with script arguments.
 
 ## Demo
 
-The sample output includes a short animated terminal walkthrough:
+- [Watch the 99-second edited walkthrough](https://github.com/goodguypeci-design/memanto/releases/download/goose-okf-demo-2026-09-08/memanto-final.mp4).
+  This is a silent Remotion replay of recorded results, labeled on screen.
+- [Watch the recorded migration commands](https://github.com/goodguypeci-design/memanto/releases/download/goose-okf-demo-2026-09-08/memanto-live-pipeline-proof.mp4).
+  Five screen-recorded chapters show real command output for source extraction,
+  conversion, import, export and recall. The source chapter reads an existing
+  Goose session from SQLite; it does not record the original Goose conversation.
+
+The animated terminal overview is also included in the repository:
 
 ![Goose sessions to OKF demo](sample_output/demo.gif)
+
+## Review the evidence
+
+| What to inspect | Evidence |
+| --- | --- |
+| Actual Goose conversation and retained rules | [Privacy-safe session export](fixtures/goose-session-export.json) |
+| Source records and mapped memory types | [Migration summary](sample_output/migration-summary.json) |
+| Size, runtime and unavailable cost figures | [Measured report](sample_output/migration-report.md) |
+| Plain Markdown after the live Memanto export | [Exported bundle](sample_output/memanto-exported-okf/index.md) |
+| Preserved terms through the importer | [Initial bundle checks](sample_output/parity-report.md) and [export checks](sample_output/memanto-export-parity-report.md) |
+
+The deterministic validator checks that expected words occur in the imported
+memory content. Its four checks cover Goose provenance and three project rules;
+they do not score four generated answers or measure retrieval accuracy. The
+recorded Memanto answer supplies separate evidence for recall of the three
+rules in this one small session. This is a reproducible adapter example, not a
+long-term memory benchmark.
+
+The shipped `memanto migrate okf` command has no `--report` option. The measured
+report above records the applicable counts, sizes and runtime; it makes no
+storage or monetary savings claim.
 
 ## Mapping table
 
